@@ -5,9 +5,8 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 PORT = int(os.environ.get("PORT", 5000))
 DB_FILE = "accounts_db.json"
-ONLINE_THRESHOLD = 45  # วินาที: หากสคริปต์ส่งข้อมูลเข้ามาภายใน 45 วิจะนับว่ากำลังออนไลน์
+ONLINE_THRESHOLD = 25  # วินาที (ถ้าสคริปต์ส่งทุก 10 วิ ให้เกิน 25 วิถือว่าออฟไลน์)
 
-# โหลดฐานข้อมูลประวัติไอดีเก่าขึ้นมาทำงาน
 ACCOUNTS = {}
 if os.path.exists(DB_FILE):
     try:
@@ -23,7 +22,7 @@ def save_db():
     except Exception:
         pass
 
-# ลิงก์รูปภาพทั้งหมด 21 ผลจาก GitHub ของคุณ
+# ดึงรูปจากคลัง GitHub ของคุณ
 GITHUB_RAW = "https://raw.githubusercontent.com/BIOATOM56/bioatom-dashboard/main/"
 FRUITS_CONFIG = [
     {"name": "Kitsune", "file": "Kitsune_Fruit.webp"},
@@ -63,7 +62,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             --bg-color: #000000;
             --card-bg: #09090b;
             --card-border: #18181b;
-            --card-active: #27272a;
             --text-main: #f4f4f5;
             --text-muted: #71717a;
             --accent-green: #10b981;
@@ -101,7 +99,37 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         .fruit-count { font-size: 17px; font-weight: 700; font-family: 'JetBrains Mono', monospace; color: var(--accent-red); }
         .fruit-count.has-stock { color: var(--accent-green); }
 
-        .accounts-table-card { background-color: var(--card-bg); border: 1px solid var(--card-border); border-radius: 10px; overflow-x: auto; }
+        /* Toolbar จัดการไอดี */
+        .table-toolbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background-color: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-bottom: none;
+            padding: 12px 18px;
+            border-radius: 10px 10px 0 0;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .select-group { display: flex; align-items: center; gap: 10px; font-size: 14px; }
+        .btn-group { display: flex; gap: 8px; }
+        .btn-action {
+            background: #18181b;
+            border: 1px solid #27272a;
+            color: var(--text-main);
+            padding: 6px 14px;
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn-action:hover:not(:disabled) { background: #27272a; }
+        .btn-action:disabled { opacity: 0.4; cursor: not-allowed; }
+        .btn-danger-sel:hover:not(:disabled) { background: #b91c1c; border-color: #ef4444; }
+        .btn-danger-all:hover { background: #7f1d1d; border-color: #dc2626; }
+
+        .accounts-table-card { background-color: var(--card-bg); border: 1px solid var(--card-border); border-radius: 0 0 10px 10px; overflow-x: auto; margin-bottom: 40px; }
         table { width: 100%; border-collapse: collapse; text-align: left; }
         th { background-color: #040405; padding: 12px 16px; font-size: 13px; color: var(--text-muted); border-bottom: 1px solid var(--card-border); }
         td { padding: 12px 16px; font-size: 14px; border-bottom: 1px solid var(--card-border); }
@@ -110,24 +138,38 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         .status-online { color: var(--accent-green); background: rgba(16, 185, 129, 0.1); }
         .status-offline { color: var(--text-muted); background: #18181b; }
         .fruit-pill { display: inline-block; background: #121215; padding: 2px 8px; border-radius: 4px; font-size: 12px; margin: 2px; border: 1px solid #27272a; }
-        
-        .btn-del {
-            background: transparent;
-            border: 1px solid #3f3f46;
-            color: #a1a1aa;
-            padding: 5px 10px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 12px;
-            transition: all 0.2s;
+
+        input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent-green); cursor: pointer; }
+
+        /* Toast Popup แจ้งเตือน */
+        #toast-box {
+            position: fixed;
+            bottom: 25px;
+            right: 25px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            z-index: 9999;
         }
-        .btn-del:hover { background: var(--accent-red); border-color: var(--accent-red); color: #fff; }
+        .toast {
+            background: #09090b;
+            border: 1px solid #27272a;
+            border-left: 4px solid var(--accent-green);
+            color: #fff;
+            padding: 12px 18px;
+            border-radius: 8px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.8);
+            font-size: 13px;
+            animation: slideIn 0.3s ease, fadeOut 0.5s ease 3.5s forwards;
+        }
+        @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        @keyframes fadeOut { to { opacity: 0; transform: translateY(-10px); } }
     </style>
 </head>
 <body>
     <div class="header">
         <h1>Bioatom Overview</h1>
-        <div class="pulse-badge"><div class="pulse-dot"></div> Pure Cloud Monitor</div>
+        <div class="pulse-badge"><div class="pulse-dot"></div> 10s Live Sync Active</div>
     </div>
 
     <div class="overview-cards">
@@ -153,24 +195,52 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <div class="grid-container" id="fruit-grid"></div>
 
     <div class="section-title">👤 Account Storage Details & History</div>
+    
+    <!-- Toolbar สำหรับเลือกลบ -->
+    <div class="table-toolbar">
+        <div class="select-group">
+            <input type="checkbox" id="check-all" onchange="toggleSelectAll(this)">
+            <label for="check-all">เลือกทั้งหมด</label>
+            <span id="selected-badge" style="color: var(--text-muted); font-size: 13px;">(เลือก 0 รายการ)</span>
+        </div>
+        <div class="btn-group">
+            <button id="btn-del-sel" class="btn-action btn-danger-sel" onclick="deleteSelected()" disabled>🗑️ ลบที่เลือก</button>
+            <button class="btn-action btn-danger-all" onclick="deleteAll()">⚠️ ลบทิ้งทั้งหมด</button>
+        </div>
+    </div>
+
     <div class="accounts-table-card">
         <table>
             <thead>
                 <tr>
+                    <th style="width: 40px; text-align: center;">#</th>
                     <th>Account Name</th>
                     <th>Status / Last Active</th>
                     <th>Total Count</th>
                     <th>Storage Details</th>
-                    <th style="text-align: right;">Action</th>
                 </tr>
             </thead>
             <tbody id="account-body">
-                <tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 24px;">กำลังโหลดฐานข้อมูล...</td></tr>
+                <tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 24px;">กำลังรอการเชื่อมต่อ...</td></tr>
             </tbody>
         </table>
     </div>
 
+    <div id="toast-box"></div>
+
     <script>
+        let lastReportedTimestamps = {};
+        const selectedUsers = new Set();
+
+        function showToast(msg) {
+            const box = document.getElementById('toast-box');
+            const el = document.createElement('div');
+            el.className = 'toast';
+            el.innerHTML = msg;
+            box.appendChild(el);
+            setTimeout(() => el.remove(), 4000);
+        }
+
         function formatTime(lastSeenSec, isOnline) {
             if (isOnline) return '<span class="status-badge status-online">● ออนไลน์</span>';
             const diff = Math.floor((Date.now() / 1000) - lastSeenSec);
@@ -180,15 +250,64 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             return `<span class="status-badge status-offline">${Math.floor(diff/86400)} วันที่แล้ว</span>`;
         }
 
-        async function deleteAccount(username) {
-            if (!confirm(`ยืนยันการลบประวัติไอดี "${username}" ออกจากระบบ?`)) return;
+        function toggleSelectAll(master) {
+            const checkboxes = document.querySelectorAll('.acc-checkbox');
+            checkboxes.forEach(cb => {
+                cb.checked = master.checked;
+                if (master.checked) selectedUsers.add(cb.value);
+                else selectedUsers.delete(cb.value);
+            });
+            updateToolbar();
+        }
+
+        function toggleAccount(username, cb) {
+            if (cb.checked) selectedUsers.add(username);
+            else {
+                selectedUsers.delete(username);
+                document.getElementById('check-all').checked = false;
+            }
+            updateToolbar();
+        }
+
+        function updateToolbar() {
+            const count = selectedUsers.size;
+            document.getElementById('selected-badge').innerText = `(เลือก ${count} รายการ)`;
+            document.getElementById('btn-del-sel').disabled = count === 0;
+        }
+
+        async function deleteSelected() {
+            const list = Array.from(selectedUsers);
+            if (list.length === 0) return;
+            if (!confirm(`ยืนยันการลบ ${list.length} ไอดีที่เลือก?`)) return;
+
             try {
                 await fetch('/api/delete', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ username: username })
+                    body: JSON.stringify({ usernames: list })
                 });
+                selectedUsers.clear();
+                updateToolbar();
+                document.getElementById('check-all').checked = false;
                 fetchDashboard();
+                showToast(`🗑️ ลบข้อมูล ${list.length} ไอดีเรียบร้อยแล้ว`);
+            } catch(e) {}
+        }
+
+        async function deleteAll() {
+            if (!confirm("⚠️ คำเตือน: คุณต้องการล้างประวัติข้อมูลทุกไอดีทิ้งทั้งหมดใช่หรือไม่?")) return;
+
+            try {
+                await fetch('/api/delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ all: true })
+                });
+                selectedUsers.clear();
+                updateToolbar();
+                document.getElementById('check-all').checked = false;
+                fetchDashboard();
+                showToast("⚠️ ล้างฐานข้อมูลทั้งหมดเรียบร้อยแล้ว");
             } catch(e) {}
         }
 
@@ -200,6 +319,17 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 document.getElementById('online-val').innerText = data.online_count;
                 document.getElementById('total-acc-val').innerText = data.accounts.length;
                 document.getElementById('fruits-val').innerText = data.total_fruits;
+
+                // ตรวจจับการแจ้งเตือนสดเมื่อไอดีส่งข้อมูลเข้ามา
+                data.accounts.forEach(acc => {
+                    const prev = lastReportedTimestamps[acc.username];
+                    if (prev && acc.last_seen > prev) {
+                        showToast(`⚡ <strong>${acc.username}</strong> อัปเดตคลังผลไม้ (${acc.fruits.length} ผล)`);
+                    } else if (!prev && acc.is_online) {
+                        showToast(`🚀 <strong>${acc.username}</strong> เริ่มการเชื่อมต่อเข้า Dashboard`);
+                    }
+                    lastReportedTimestamps[acc.username] = acc.last_seen;
+                });
 
                 const grid = document.getElementById('fruit-grid');
                 grid.innerHTML = data.fruits.map(f => `
@@ -218,17 +348,20 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 if (data.accounts.length === 0) {
                     tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 24px;">ไม่มีประวัติข้อมูลไอดีในระบบ</td></tr>';
                 } else {
-                    tbody.innerHTML = data.accounts.map(acc => `
-                        <tr>
-                            <td class="user-tag">${acc.username}</td>
-                            <td>${formatTime(acc.last_seen, acc.is_online)}</td>
-                            <td><strong>${acc.fruits.length}</strong> ผล</td>
-                            <td>${acc.fruits.length ? acc.fruits.map(f => `<span class="fruit-pill">${f}</span>`).join('') : '<span style="color:var(--text-muted)">- คลังว่าง -</span>'}</td>
-                            <td style="text-align: right;">
-                                <button class="btn-del" onclick="deleteAccount('${acc.username}')">🗑️ ลบข้อมูล</button>
-                            </td>
-                        </tr>
-                    `).join('');
+                    tbody.innerHTML = data.accounts.map(acc => {
+                        const isChecked = selectedUsers.has(acc.username) ? 'checked' : '';
+                        return `
+                            <tr>
+                                <td style="text-align: center;">
+                                    <input type="checkbox" class="acc-checkbox" value="${acc.username}" ${isChecked} onchange="toggleAccount('${acc.username}', this)">
+                                </td>
+                                <td class="user-tag">${acc.username}</td>
+                                <td>${formatTime(acc.last_seen, acc.is_online)}</td>
+                                <td><strong>${acc.fruits.length}</strong> ผล</td>
+                                <td>${acc.fruits.length ? acc.fruits.map(f => `<span class="fruit-pill">${f}</span>`).join('') : '<span style="color:var(--text-muted)">- คลังว่าง -</span>'}</td>
+                            </tr>
+                        `;
+                    }).join('');
                 }
             } catch (err) {}
         }
@@ -273,7 +406,6 @@ class DashboardServer(BaseHTTPRequestHandler):
                     "is_online": is_online
                 })
 
-            # เรียงไอดี: คนที่ออนไลน์อยู่ขึ้นก่อน ตามด้วยคนที่เพิ่งออฟไลน์
             all_accounts.sort(key=lambda x: (not x["is_online"], -x["last_seen"]))
 
             fruits_list = [{"name": item["name"], "icon": item["icon"], "count": fruit_counts[item["name"]]} for item in MONITOR_FRUITS]
@@ -316,9 +448,13 @@ class DashboardServer(BaseHTTPRequestHandler):
             body = self.rfile.read(content_len)
             try:
                 data = json.loads(body.decode("utf-8"))
-                user = data.get("username")
-                if user and user in ACCOUNTS:
-                    del ACCOUNTS[user]
+                if data.get("all") is True:
+                    ACCOUNTS.clear()
+                    save_db()
+                elif "usernames" in data and isinstance(data["usernames"], list):
+                    for u in data["usernames"]:
+                        if u in ACCOUNTS:
+                            del ACCOUNTS[u]
                     save_db()
                 self.send_response(200)
                 self.end_headers()
