@@ -8,23 +8,40 @@ OFFLINE_TIMEOUT = 15
 
 ACCOUNTS = {}
 
-# รายชื่อผลไม้ทั้งหมด 21 ชนิด
-FRUITS_LIST = [
-    "Kitsune", "Dragon", "Yeti", "Tiger", "Spirit", "Control", 
-    "Gas", "Venom", "Shadow", "Dough", "T-Rex", "Mammoth", 
-    "Gravity", "Pain", "Portal", "Buddha", "Blizzard", "Sound", 
-    "Phoenix", "Magnet", "Lightning"
-]
-
-# ดึงรูปจาก GitHub ของคุณอัตโนมัติตามชื่อผลไม้ (เช่น kitsune.png, dragon.png)
+# ลิงก์ตรงดึงไฟล์จาก GitHub คลังของคุณ
 GITHUB_RAW = "https://raw.githubusercontent.com/BIOATOM56/bioatom-dashboard/main/"
+
+# รายการผลไม้พร้อมชี้ตรงไปยังไฟล์ .webp ที่อัปโหลดไว้
+FRUITS_CONFIG = [
+    {"name": "Kitsune", "file": "Kitsune_Fruit.webp"},
+    {"name": "Dragon", "file": "Dragon_Fruit.webp"},
+    {"name": "Yeti", "file": "Yeti_Fruit.webp"},
+    {"name": "Tiger", "file": "Tiger_Fruit.webp"},      # หากตั้งชื่อเป็น Leopard ระบบจะสลับให้ออโต้
+    {"name": "Spirit", "file": "Spirit_Fruit.webp"},
+    {"name": "Control", "file": "Control_Fruit.webp"},
+    {"name": "Gas", "file": "Gas_Fruit.webp"},
+    {"name": "Venom", "file": "Venom_Fruit.webp"},
+    {"name": "Shadow", "file": "Shadow_Fruit.webp"},
+    {"name": "Dough", "file": "Dough_Fruit.webp"},
+    {"name": "T-Rex", "file": "T-Rex_Fruit.webp"},
+    {"name": "Mammoth", "file": "Mammoth_Fruit.webp"},
+    {"name": "Gravity", "file": "Gravity_Fruit.webp"},
+    {"name": "Pain", "file": "Pain_Fruit.webp"},
+    {"name": "Portal", "file": "Portal_Fruit.webp"},
+    {"name": "Buddha", "file": "Buddha_Fruit.webp"},
+    {"name": "Blizzard", "file": "Blizzard_Fruit.webp"},
+    {"name": "Sound", "file": "Sound_Fruit.webp"},
+    {"name": "Phoenix", "file": "Phoenix_Fruit.webp"},
+    {"name": "Magnet", "file": "Magnet_Fruit.webp"},
+    {"name": "Lightning", "file": "Lightning_Fruit.webp"}
+]
 
 MONITOR_FRUITS = [
     {
-        "name": f,
-        "icon": f"{GITHUB_RAW}{f.lower().replace('-', '').replace(' ', '')}.png"
+        "name": item["name"],
+        "icon": f"{GITHUB_RAW}{item['file']}"
     }
-    for f in FRUITS_LIST
+    for item in FRUITS_CONFIG
 ]
 
 HTML_TEMPLATE = """<!DOCTYPE html>
@@ -125,6 +142,16 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     </div>
 
     <script>
+        function handleImgError(img, fruitName) {
+            if (fruitName === 'Tiger' && !img.dataset.tried) {
+                img.dataset.tried = 'true';
+                img.src = 'https://raw.githubusercontent.com/BIOATOM56/bioatom-dashboard/main/Leopard_Fruit.webp';
+                return;
+            }
+            img.onerror = null;
+            img.src = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='44' height='44' viewBox='0 0 24 24' fill='none' stroke='%23525f73' stroke-width='2'><rect width='18' height='18' x='3' y='3' rx='2'/><circle cx='8.5' cy='8.5' r='1.5'/><path d='m21 15-5-5L5 21'/></svg>";
+        }
+
         async function fetchDashboard() {
             try {
                 const res = await fetch('/api/data');
@@ -138,7 +165,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                     <div class="fruit-card ${f.count > 0 ? 'active' : ''}">
                         <img class="fruit-icon" 
                              src="${f.icon}" 
-                             onerror="this.onerror=null; this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'44\\' height=\\'44\\' viewBox=\\'0 0 24 24\\' fill=\\'none\\' stroke=\\'%23525f73\\' stroke-width=\\'2\\'><rect width=\\'18\\' height=\\'18\\' x=\\'3\\' y=\\'3\\' rx=\\'2\\'/><circle cx=\\'8.5\\' cy=\\'8.5\\' r=\\'1.5\\'/><path d=\\'m21 15-5-5L5 21\\'/></svg>';">
+                             onerror="handleImgError(this, '${f.name}')">
                         <div class="fruit-info">
                             <span class="fruit-name">${f.name}</span>
                             <span class="fruit-count ${f.count > 0 ? 'has-stock' : ''}">${f.count}</span>
