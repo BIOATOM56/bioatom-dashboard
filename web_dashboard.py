@@ -29,7 +29,7 @@ MONITOR_FRUITS = [
     {"name": "Sound", "icon": "https://static.wikia.nocookie.net/bloxfruits/images/0/07/SoundFruit.png"},
     {"name": "Phoenix", "icon": "https://static.wikia.nocookie.net/bloxfruits/images/a/ae/PhoenixFruit.png"},
     {"name": "Magnet", "icon": "https://static.wikia.nocookie.net/bloxfruits/images/8/89/MagnetFruit.png"},
-    {"name": "Light", "icon": "https://static.wikia.nocookie.net/bloxfruits/images/8/82/LightFruit.png"}
+    {"name": "Lightning", "icon": "https://static.wikia.nocookie.net/roblox-blox-piece/images/7/78/Lightning_Fruit.png/revision/latest?cb=20260806235926"}
 ]
 
 HTML_TEMPLATE = """<!DOCTYPE html>
