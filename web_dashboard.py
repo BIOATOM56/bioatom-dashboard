@@ -8,36 +8,29 @@ OFFLINE_TIMEOUT = 15
 
 ACCOUNTS = {}
 
-# รายการผลไม้และไอคอน
+# รายชื่อผลไม้ทั้งหมด 21 ชนิด
+FRUITS_LIST = [
+    "Kitsune", "Dragon", "Yeti", "Tiger", "Spirit", "Control", 
+    "Gas", "Venom", "Shadow", "Dough", "T-Rex", "Mammoth", 
+    "Gravity", "Pain", "Portal", "Buddha", "Blizzard", "Sound", 
+    "Phoenix", "Magnet", "Lightning"
+]
+
+# ดึงรูปจาก GitHub ของคุณอัตโนมัติตามชื่อผลไม้ (เช่น kitsune.png, dragon.png)
+GITHUB_RAW = "https://raw.githubusercontent.com/BIOATOM56/bioatom-dashboard/main/"
+
 MONITOR_FRUITS = [
-    {"name": "Kitsune", "icon": "https://static.wikia.nocookie.net/roblox-blox-piece/images/1/1d/KitsuneFruit.png"},
-    {"name": "Dragon", "icon": "https://static.wikia.nocookie.net/roblox-blox-piece/images/6/64/DragonFruit.png"},
-    {"name": "Yeti", "icon": "https://static.wikia.nocookie.net/roblox-blox-piece/images/0/07/YetiFruit.png"},
-    {"name": "Tiger", "icon": "https://static.wikia.nocookie.net/roblox-blox-piece/images/4/4b/LeopardFruit.png"},
-    {"name": "Spirit", "icon": "https://static.wikia.nocookie.net/roblox-blox-piece/images/7/70/SpiritFruit.png"},
-    {"name": "Control", "icon": "https://static.wikia.nocookie.net/roblox-blox-piece/images/8/87/ControlFruit.png"},
-    {"name": "Gas", "icon": "https://static.wikia.nocookie.net/roblox-blox-piece/images/2/2f/GasFruit.png"},
-    {"name": "Venom", "icon": "https://static.wikia.nocookie.net/roblox-blox-piece/images/4/49/VenomFruit.png"},
-    {"name": "Shadow", "icon": "https://static.wikia.nocookie.net/roblox-blox-piece/images/c/c5/ShadowFruit.png"},
-    {"name": "Dough", "icon": "https://static.wikia.nocookie.net/roblox-blox-piece/images/4/4f/DoughFruit.png"},
-    {"name": "T-Rex", "icon": "https://static.wikia.nocookie.net/roblox-blox-piece/images/e/e0/T-RexFruit.png"},
-    {"name": "Mammoth", "icon": "https://static.wikia.nocookie.net/roblox-blox-piece/images/9/91/MammothFruit.png"},
-    {"name": "Gravity", "icon": "https://static.wikia.nocookie.net/roblox-blox-piece/images/5/53/GravityFruit.png"},
-    {"name": "Pain", "icon": "https://static.wikia.nocookie.net/roblox-blox-piece/images/d/df/PainFruit.png"},
-    {"name": "Portal", "icon": "https://static.wikia.nocookie.net/roblox-blox-piece/images/e/e2/PortalFruit.png"},
-    {"name": "Buddha", "icon": "https://static.wikia.nocookie.net/roblox-blox-piece/images/5/5e/BuddhaFruit.png"},
-    {"name": "Blizzard", "icon": "https://static.wikia.nocookie.net/roblox-blox-piece/images/a/a2/BlizzardFruit.png"},
-    {"name": "Sound", "icon": "https://static.wikia.nocookie.net/roblox-blox-piece/images/0/07/SoundFruit.png"},
-    {"name": "Phoenix", "icon": "https://static.wikia.nocookie.net/roblox-blox-piece/images/a/ae/PhoenixFruit.png"},
-    {"name": "Magnet", "icon": "https://static.wikia.nocookie.net/roblox-blox-piece/images/8/89/MagnetFruit.png"},
-    {"name": "Lightning", "icon": "https://static.wikia.nocookie.net/roblox-blox-piece/images/7/78/Lightning_Fruit.png"}
+    {
+        "name": f,
+        "icon": f"{GITHUB_RAW}{f.lower().replace('-', '').replace(' ', '')}.png"
+    }
+    for f in FRUITS_LIST
 ]
 
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="th">
 <head>
     <meta charset="UTF-8">
-    <meta name="referrer" content="no-referrer">
     <title>Bioatom Inventory Dashboard</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;600&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
@@ -145,8 +138,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                     <div class="fruit-card ${f.count > 0 ? 'active' : ''}">
                         <img class="fruit-icon" 
                              src="${f.icon}" 
-                             referrerpolicy="no-referrer"
-                             onerror="this.onerror=null; this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'44\\' height=\\'44\\' viewBox=\\'0 0 24 24\\' fill=\\'none\\' stroke=\\'%237e8b9b\\' stroke-width=\\'2\\'><rect width=\\'18\\' height=\\'18\\' x=\\'3\\' y=\\'3\\' rx=\\'2\\'/><circle cx=\\'8.5\\' cy=\\'8.5\\' r=\\'1.5\\'/><path d=\\'m21 15-5-5L5 21\\'/></svg>';">
+                             onerror="this.onerror=null; this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'44\\' height=\\'44\\' viewBox=\\'0 0 24 24\\' fill=\\'none\\' stroke=\\'%23525f73\\' stroke-width=\\'2\\'><rect width=\\'18\\' height=\\'18\\' x=\\'3\\' y=\\'3\\' rx=\\'2\\'/><circle cx=\\'8.5\\' cy=\\'8.5\\' r=\\'1.5\\'/><path d=\\'m21 15-5-5L5 21\\'/></svg>';">
                         <div class="fruit-info">
                             <span class="fruit-name">${f.name}</span>
                             <span class="fruit-count ${f.count > 0 ? 'has-stock' : ''}">${f.count}</span>
