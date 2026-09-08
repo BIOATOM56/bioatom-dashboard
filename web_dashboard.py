@@ -5,7 +5,7 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 PORT = int(os.environ.get("PORT", 5000))
 DB_FILE = "accounts_db.json"
-ONLINE_THRESHOLD = 25  # วินาที (ถ้าสคริปต์ส่งทุก 10 วิ ให้เกิน 25 วิถือว่าออฟไลน์)
+ONLINE_THRESHOLD = 25  # วินาที: หากส่งข้อมูลภายใน 25 วิ ถือว่าออนไลน์
 
 ACCOUNTS = {}
 if os.path.exists(DB_FILE):
@@ -22,7 +22,6 @@ def save_db():
     except Exception:
         pass
 
-# ดึงรูปจากคลัง GitHub ของคุณ
 GITHUB_RAW = "https://raw.githubusercontent.com/BIOATOM56/bioatom-dashboard/main/"
 FRUITS_CONFIG = [
     {"name": "Kitsune", "file": "Kitsune_Fruit.webp"},
@@ -99,7 +98,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         .fruit-count { font-size: 17px; font-weight: 700; font-family: 'JetBrains Mono', monospace; color: var(--accent-red); }
         .fruit-count.has-stock { color: var(--accent-green); }
 
-        /* Toolbar จัดการไอดี */
+        /* แถบเครื่องมือจัดการ */
         .table-toolbar {
             display: flex;
             justify-content: space-between;
@@ -110,9 +109,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             padding: 12px 18px;
             border-radius: 10px 10px 0 0;
             flex-wrap: wrap;
-            gap: 10px;
+            gap: 12px;
         }
-        .select-group { display: flex; align-items: center; gap: 10px; font-size: 14px; }
+        .left-controls { display: flex; align-items: center; gap: 18px; font-size: 14px; }
+        .toggle-sort { display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; color: #d4d4d8; font-weight: 400; }
+        .toggle-sort input { accent-color: var(--accent-blue); width: 16px; height: 16px; cursor: pointer; }
+        .select-group { display: flex; align-items: center; gap: 8px; }
         .btn-group { display: flex; gap: 8px; }
         .btn-action {
             background: #18181b;
@@ -125,7 +127,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             transition: all 0.2s;
         }
         .btn-action:hover:not(:disabled) { background: #27272a; }
-        .btn-action:disabled { opacity: 0.4; cursor: not-allowed; }
+        .btn-action:disabled { opacity: 0.35; cursor: not-allowed; }
         .btn-danger-sel:hover:not(:disabled) { background: #b91c1c; border-color: #ef4444; }
         .btn-danger-all:hover { background: #7f1d1d; border-color: #dc2626; }
 
@@ -139,37 +141,13 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         .status-offline { color: var(--text-muted); background: #18181b; }
         .fruit-pill { display: inline-block; background: #121215; padding: 2px 8px; border-radius: 4px; font-size: 12px; margin: 2px; border: 1px solid #27272a; }
 
-        input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent-green); cursor: pointer; }
-
-        /* Toast Popup แจ้งเตือน */
-        #toast-box {
-            position: fixed;
-            bottom: 25px;
-            right: 25px;
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-            z-index: 9999;
-        }
-        .toast {
-            background: #09090b;
-            border: 1px solid #27272a;
-            border-left: 4px solid var(--accent-green);
-            color: #fff;
-            padding: 12px 18px;
-            border-radius: 8px;
-            box-shadow: 0 8px 24px rgba(0,0,0,0.8);
-            font-size: 13px;
-            animation: slideIn 0.3s ease, fadeOut 0.5s ease 3.5s forwards;
-        }
-        @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
-        @keyframes fadeOut { to { opacity: 0; transform: translateY(-10px); } }
+        input[type="checkbox"].acc-checkbox { width: 16px; height: 16px; accent-color: var(--accent-green); cursor: pointer; }
     </style>
 </head>
 <body>
     <div class="header">
         <h1>Bioatom Overview</h1>
-        <div class="pulse-badge"><div class="pulse-dot"></div> 10s Live Sync Active</div>
+        <div class="pulse-badge"><div class="pulse-dot"></div> Live Cloud Monitor</div>
     </div>
 
     <div class="overview-cards">
@@ -196,12 +174,17 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
     <div class="section-title">👤 Account Storage Details & History</div>
     
-    <!-- Toolbar สำหรับเลือกลบ -->
     <div class="table-toolbar">
-        <div class="select-group">
-            <input type="checkbox" id="check-all" onchange="toggleSelectAll(this)">
-            <label for="check-all">เลือกทั้งหมด</label>
-            <span id="selected-badge" style="color: var(--text-muted); font-size: 13px;">(เลือก 0 รายการ)</span>
+        <div class="left-controls">
+            <div class="select-group">
+                <input type="checkbox" id="check-all" class="acc-checkbox" onchange="toggleSelectAll(this)">
+                <label for="check-all" style="cursor:pointer;">เลือกทั้งหมด</label>
+                <span id="selected-badge" style="color: var(--text-muted); font-size: 13px;">(เลือก 0)</span>
+            </div>
+            <label class="toggle-sort">
+                <input type="checkbox" id="sort-online-toggle" onchange="fetchDashboard()">
+                <span>📌 เอาไอดีออนไลน์ขึ้นด้านบน</span>
+            </label>
         </div>
         <div class="btn-group">
             <button id="btn-del-sel" class="btn-action btn-danger-sel" onclick="deleteSelected()" disabled>🗑️ ลบที่เลือก</button>
@@ -226,20 +209,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         </table>
     </div>
 
-    <div id="toast-box"></div>
-
     <script>
-        let lastReportedTimestamps = {};
         const selectedUsers = new Set();
-
-        function showToast(msg) {
-            const box = document.getElementById('toast-box');
-            const el = document.createElement('div');
-            el.className = 'toast';
-            el.innerHTML = msg;
-            box.appendChild(el);
-            setTimeout(() => el.remove(), 4000);
-        }
 
         function formatTime(lastSeenSec, isOnline) {
             if (isOnline) return '<span class="status-badge status-online">● ออนไลน์</span>';
@@ -251,7 +222,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         }
 
         function toggleSelectAll(master) {
-            const checkboxes = document.querySelectorAll('.acc-checkbox');
+            const checkboxes = document.querySelectorAll('.acc-checkbox:not(#check-all)');
             checkboxes.forEach(cb => {
                 cb.checked = master.checked;
                 if (master.checked) selectedUsers.add(cb.value);
@@ -271,7 +242,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
         function updateToolbar() {
             const count = selectedUsers.size;
-            document.getElementById('selected-badge').innerText = `(เลือก ${count} รายการ)`;
+            document.getElementById('selected-badge').innerText = `(เลือก ${count})`;
             document.getElementById('btn-del-sel').disabled = count === 0;
         }
 
@@ -290,7 +261,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 updateToolbar();
                 document.getElementById('check-all').checked = false;
                 fetchDashboard();
-                showToast(`🗑️ ลบข้อมูล ${list.length} ไอดีเรียบร้อยแล้ว`);
             } catch(e) {}
         }
 
@@ -307,7 +277,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 updateToolbar();
                 document.getElementById('check-all').checked = false;
                 fetchDashboard();
-                showToast("⚠️ ล้างฐานข้อมูลทั้งหมดเรียบร้อยแล้ว");
             } catch(e) {}
         }
 
@@ -319,17 +288,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 document.getElementById('online-val').innerText = data.online_count;
                 document.getElementById('total-acc-val').innerText = data.accounts.length;
                 document.getElementById('fruits-val').innerText = data.total_fruits;
-
-                // ตรวจจับการแจ้งเตือนสดเมื่อไอดีส่งข้อมูลเข้ามา
-                data.accounts.forEach(acc => {
-                    const prev = lastReportedTimestamps[acc.username];
-                    if (prev && acc.last_seen > prev) {
-                        showToast(`⚡ <strong>${acc.username}</strong> อัปเดตคลังผลไม้ (${acc.fruits.length} ผล)`);
-                    } else if (!prev && acc.is_online) {
-                        showToast(`🚀 <strong>${acc.username}</strong> เริ่มการเชื่อมต่อเข้า Dashboard`);
-                    }
-                    lastReportedTimestamps[acc.username] = acc.last_seen;
-                });
 
                 const grid = document.getElementById('fruit-grid');
                 grid.innerHTML = data.fruits.map(f => `
@@ -344,11 +302,23 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                     </div>
                 `).join('');
 
+                // การจัดเรียง: หากติ๊กเลือก ให้เอาออนไลน์ขึ้นบน หากไม่ติ๊ก ให้เรียงชื่อตามตัวอักษรคงที่ (ไม่เด้งสลับ)
+                const sortOnlineFirst = document.getElementById('sort-online-toggle').checked;
+                const accountsList = [...data.accounts];
+                if (sortOnlineFirst) {
+                    accountsList.sort((a, b) => {
+                        if (a.is_online !== b.is_online) return a.is_online ? -1 : 1;
+                        return a.username.localeCompare(b.username);
+                    });
+                } else {
+                    accountsList.sort((a, b) => a.username.localeCompare(b.username));
+                }
+
                 const tbody = document.getElementById('account-body');
-                if (data.accounts.length === 0) {
+                if (accountsList.length === 0) {
                     tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 24px;">ไม่มีประวัติข้อมูลไอดีในระบบ</td></tr>';
                 } else {
-                    tbody.innerHTML = data.accounts.map(acc => {
+                    tbody.innerHTML = accountsList.map(acc => {
                         const isChecked = selectedUsers.has(acc.username) ? 'checked' : '';
                         return `
                             <tr>
@@ -405,8 +375,6 @@ class DashboardServer(BaseHTTPRequestHandler):
                     "last_seen": last_seen,
                     "is_online": is_online
                 })
-
-            all_accounts.sort(key=lambda x: (not x["is_online"], -x["last_seen"]))
 
             fruits_list = [{"name": item["name"], "icon": item["icon"], "count": fruit_counts[item["name"]]} for item in MONITOR_FRUITS]
 
