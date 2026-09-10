@@ -246,7 +246,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 </tr>
             </thead>
             <tbody id="account-body">
-                <tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 24px;">ℹ️ ยังไม่มีข้อมูลไอดีในระบบ (กรุณารันสคริปต์ในเกมเพื่อเริ่มส่งข้อมูล)</td></tr>
+                <tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 24px;">ℹ️ ยังไม่มีข้อมูลไอดีในระบบ</td></tr>
             </tbody>
         </table>
     </div>
@@ -348,7 +348,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 accountsList.sort((a, b) => a.username.localeCompare(b.username));
             }
 
-            // ตรวจสอบทั้งชื่อไอดี สถานะ และรายการผลไม้ ไม่หลุดข้อมูล
             const currentHash = JSON.stringify(accountsList.map(a => [a.username, a.is_online, (a.fruits || []).join(',')]));
             if (currentHash === lastRenderHash) {
                 return;
@@ -357,7 +356,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
             const tbody = document.getElementById('account-body');
             if (accountsList.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 24px;">ℹ️ ยังไม่มีข้อมูลไอดีในระบบ (กรุณารันสคริปต์ในเกมเพื่อเริ่มส่งข้อมูล)</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 24px;">ℹ️ ยังไม่มีข้อมูลไอดีในระบบ</td></tr>';
             } else {
                 tbody.innerHTML = accountsList.map(acc => {
                     const isChecked = selectedUsers.has(acc.username) ? 'checked' : '';
@@ -416,7 +415,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
 class DashboardServer(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
-        # รองรับ CORS Preflight
         self.send_response(200)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
@@ -448,6 +446,7 @@ class DashboardServer(BaseHTTPRequestHandler):
                 if is_online:
                     online_count += 1
 
+                # จำผลไม้เดิมของไอดีแม้ออฟไลน์ไปแล้ว และนับสถิติผลไม้รวมตามปกติ
                 fruits = data.get("fruits", [])
                 if isinstance(fruits, list):
                     total_fruits += len(fruits)
@@ -488,17 +487,29 @@ class DashboardServer(BaseHTTPRequestHandler):
             try:
                 data = json.loads(body.decode("utf-8"))
                 user = data.get("username")
-                fruits = data.get("fruits", [])
                 
                 if user:
                     with db_lock:
+                        old_data = ACCOUNTS.get(user, {})
+                        old_fruits = old_data.get("fruits", [])
+                        
+                        # อัปเดตผลไม้ใหม่เฉพาะตอนที่มีการสแกนกระเป๋าจริง (is_scan == True) เท่านั้น
+                        # ถ้าเป็นแค่ Heartbeat เช็กออนไลน์ จะจดจำผลไม้เดิมไว้ 100% ไม่ลบทิ้งเด็ดขาด
+                        if data.get("is_scan") is True:
+                            new_fruits = data.get("fruits", [])
+                            if not isinstance(new_fruits, list):
+                                new_fruits = []
+                        elif "fruits" in data and len(data["fruits"]) > 0:
+                            new_fruits = data["fruits"]
+                        else:
+                            new_fruits = old_fruits
+                        
                         ACCOUNTS[user] = {
-                            "fruits": fruits if isinstance(fruits, list) else [],
+                            "fruits": new_fruits,
                             "last_seen": time.time()
                         }
                     save_db()
-                    # พิมพ์ลง Log บน Render ให้เห็นชัดเจน 100%
-                    print(f"📥 [REPORT IN] บัญชี: {user} | ผลไม้ ({len(fruits)} ผล): {fruits}")
+                    print(f"📥 [REPORT IN] {user} | ผลไม้คงเหลือ: {len(new_fruits)} ผล (จำผลไม้เดิมถาวร)")
 
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
@@ -506,7 +517,6 @@ class DashboardServer(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(b'{"status":"ok"}')
             except Exception as e:
-                print(f"⚠️ [REPORT ERROR] แปลงข้อมูลไม่สำเร็จ: {e}")
                 self.send_response(400)
                 self.send_header("Access-Control-Allow-Origin", "*")
                 self.end_headers()
@@ -539,5 +549,5 @@ class DashboardServer(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     server = ThreadingHTTPServer(("0.0.0.0", PORT), DashboardServer)
-    print(f"🚀 [Server Started] ทำงานบนพอร์ต {PORT}")
+    print(f"🚀 [Server Started] พอร์ต {PORT}")
     server.serve_forever()
