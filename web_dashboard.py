@@ -8,13 +8,11 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 PORT = int(os.environ.get("PORT", 5000))
 DB_FILE = "accounts_db.json"
 DB_BAK_FILE = "accounts_db.json.bak"
-ONLINE_THRESHOLD = 25  # วินาที: ส่งข้อมูลภายใน 25 วิ ถือว่าออนไลน์
+ONLINE_THRESHOLD = 25  # หากส่งข้อมูลภายใน 25 วินาที ถือว่าออนไลน์
 
-# Thread Safety Lock ป้องกันการเขียนไฟล์ชนกัน
 db_lock = threading.Lock()
 ACCOUNTS = {}
 
-# โหลดฐานข้อมูลพร้อมระบบสำรองกู้คืนอัตโนมัติ
 def load_db():
     global ACCOUNTS
     with db_lock:
@@ -23,7 +21,7 @@ def load_db():
                 try:
                     with open(file_path, "r", encoding="utf-8") as f:
                         data = json.load(f)
-                        if isinstance(data, dict) and len(data) > 0:
+                        if isinstance(data, dict):
                             ACCOUNTS = data
                             print(f"[DB] โหลดข้อมูลสำเร็จจาก {file_path} ({len(ACCOUNTS)} ไอดี)")
                             return
@@ -33,17 +31,13 @@ def load_db():
 
 load_db()
 
-# บันทึกข้อมูลแบบ Atomic Write (เขียนไฟล์ Temp ก่อนสลับ) ป้องกันข้อมูลสูญหาย 100%
 def save_db():
     with db_lock:
         try:
             temp_file = DB_FILE + ".tmp"
             with open(temp_file, "w", encoding="utf-8") as f:
                 json.dump(ACCOUNTS, f, ensure_ascii=False, indent=2)
-            
-            # บันทึกลงไฟล์หลัก
             os.replace(temp_file, DB_FILE)
-            # ทำไฟล์ Backup คู่ขนานเสมอ
             shutil.copy(DB_FILE, DB_BAK_FILE)
         except Exception as e:
             print(f"[DB Error] บันทึกไฟล์ล้มเหลว: {e}")
@@ -116,6 +110,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             display: flex;
             align-items: center;
             gap: 10px;
+            transition: border-color 0.2s;
         }
         .fruit-card.active { border-color: rgba(16, 185, 129, 0.4); background: rgba(16, 185, 129, 0.03); }
         .fruit-icon { width: 42px; height: 42px; object-fit: contain; background: #000000; border-radius: 6px; padding: 2px; }
@@ -206,7 +201,18 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     </div>
 
     <div class="section-title">📦 Total Inventory Catalog</div>
-    <div class="grid-container" id="fruit-grid"></div>
+    <div class="grid-container" id="fruit-grid">
+        <!-- Render Static Cards ทันที ไม่ปล่อยให้หน้าจอโล่ง -->
+        """ + "".join([f"""
+        <div class="fruit-card" id="card-{f['name']}">
+            <img class="fruit-icon" src="{f['icon']}" onerror="this.style.opacity=0.3;">
+            <div class="fruit-info">
+                <span class="fruit-name">{f['name']}</span>
+                <span class="fruit-count" id="count-{f['name']}">0</span>
+            </div>
+        </div>
+        """ for f in MONITOR_FRUITS]) + """
+    </div>
 
     <div class="section-title">👤 Account Storage Details & History</div>
     
@@ -241,14 +247,14 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 </tr>
             </thead>
             <tbody id="account-body">
-                <tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 24px;">กำลังรอการเชื่อมต่อ...</td></tr>
+                <tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 24px;">ℹ️ ยังไม่มีข้อมูลไอดีในระบบ (กรุณารันสคริปต์ในเกมเพื่อเริ่มส่งข้อมูล)</td></tr>
             </tbody>
         </table>
     </div>
 
     <script>
         const selectedUsers = new Set();
-        let cachedData = null;
+        let cachedData = { online_count: 0, total_fruits: 0, accounts: [] };
         let lastRenderHash = "";
 
         function formatTime(lastSeenSec, isOnline) {
@@ -299,7 +305,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 selectedUsers.clear();
                 updateToolbar();
                 document.getElementById('check-all').checked = false;
-                fetchDashboard(true);
+                fetchDashboard();
             } catch(e) {}
         }
 
@@ -315,19 +321,18 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 selectedUsers.clear();
                 updateToolbar();
                 document.getElementById('check-all').checked = false;
-                fetchDashboard(true);
+                fetchDashboard();
             } catch(e) {}
         }
 
         function applyFilterAndRender() {
-            if (!cachedData) return;
+            if (!cachedData || !cachedData.accounts) return;
 
             const searchQuery = document.getElementById('search-input').value.toLowerCase().trim();
             const sortOnlineFirst = document.getElementById('sort-online-toggle').checked;
             
             let accountsList = [...cachedData.accounts];
 
-            // กรองข้อความค้นหา (ชื่อไอดี หรือ ผลไม้)
             if (searchQuery) {
                 accountsList = accountsList.filter(acc => 
                     acc.username.toLowerCase().includes(searchQuery) ||
@@ -335,7 +340,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 );
             }
 
-            // จัดเรียง
             if (sortOnlineFirst) {
                 accountsList.sort((a, b) => {
                     if (a.is_online !== b.is_online) return a.is_online ? -1 : 1;
@@ -345,17 +349,15 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 accountsList.sort((a, b) => a.username.localeCompare(b.username));
             }
 
-            // ป้องกันการ Render ซ้ำถ้าข้อมูลชุดเดิมตรงกัน (Ctrl+F จะไม่หาย)
             const currentHash = JSON.stringify(accountsList.map(a => [a.username, a.is_online, a.fruits.length]));
             if (currentHash === lastRenderHash) {
-                // อัปเดตเฉพาะป้ายสถานะเวลา ไม่รื้อตารางทิ้ง
                 return;
             }
             lastRenderHash = currentHash;
 
             const tbody = document.getElementById('account-body');
             if (accountsList.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 24px;">ไม่พบข้อมูลไอดี</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 24px;">ℹ️ ยังไม่มีข้อมูลไอดีในระบบ (กรุณารันสคริปต์ในเกมเพื่อเริ่มส่งข้อมูล)</td></tr>';
             } else {
                 tbody.innerHTML = accountsList.map(acc => {
                     const isChecked = selectedUsers.has(acc.username) ? 'checked' : '';
@@ -374,9 +376,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             }
         }
 
-        async function fetchDashboard(forceRender = false) {
+        async function fetchDashboard() {
             try {
                 const res = await fetch('/api/data');
+                if (!res.ok) return;
                 const data = await res.json();
                 cachedData = data;
 
@@ -384,19 +387,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 document.getElementById('total-acc-val').innerText = data.accounts.length;
                 document.getElementById('fruits-val').innerText = data.total_fruits;
 
-                // อัปเดตการ์ดผลไม้เฉพาะตัวเลข ไม่ทำลาย DOM ทิ้ง
-                const grid = document.getElementById('fruit-grid');
-                if (grid.children.length === 0 || forceRender) {
-                    grid.innerHTML = data.fruits.map(f => `
-                        <div class="fruit-card ${f.count > 0 ? 'active' : ''}" id="card-${f.name}">
-                            <img class="fruit-icon" src="${f.icon}" onerror="this.onerror=null; this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'42\\' height=\\'42\\' viewBox=\\'0 0 24 24\\' fill=\\'none\\' stroke=\\'%23525f73\\' stroke-width=\\'2\\'><rect width=\\'18\\' height=\\'18\\' x=\\'3\\' y=\\'3\\' rx=\\'2\\'/><circle cx=\\'8.5\\' cy=\\'8.5\\' r=\\'1.5\\'/><path d=\\'m21 15-5-5L5 21\\'/></svg>';">
-                            <div class="fruit-info">
-                                <span class="fruit-name">${f.name}</span>
-                                <span class="fruit-count ${f.count > 0 ? 'has-stock' : ''}" id="count-${f.name}">${f.count}</span>
-                            </div>
-                        </div>
-                    `).join('');
-                } else {
+                if (data.fruits) {
                     data.fruits.forEach(f => {
                         const countEl = document.getElementById(`count-${f.name}`);
                         const cardEl = document.getElementById(`card-${f.name}`);
@@ -415,9 +406,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             } catch (err) {}
         }
 
-        // รีเฟรชข้อมูลทุก 3 วินาที
         setInterval(fetchDashboard, 3000);
-        fetchDashboard(true);
+        fetchDashboard();
     </script>
 </body>
 </html>
@@ -430,7 +420,7 @@ class DashboardServer(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.end_headers()
             self.wfile.write(HTML_TEMPLATE.encode("utf-8"))
-        elif self.path == "/api/data":
+        elif self.path.startswith("/api/data"):
             now = time.time()
             all_accounts = []
             fruit_counts = {f["name"]: 0 for f in MONITOR_FRUITS}
@@ -441,20 +431,23 @@ class DashboardServer(BaseHTTPRequestHandler):
                 current_accounts = dict(ACCOUNTS)
 
             for user, data in current_accounts.items():
+                if not isinstance(data, dict):
+                    continue
                 last_seen = data.get("last_seen", 0)
                 is_online = (now - last_seen) <= ONLINE_THRESHOLD
                 if is_online:
                     online_count += 1
 
                 fruits = data.get("fruits", [])
-                total_fruits += len(fruits)
-                for fr in fruits:
-                    if fr in fruit_counts:
-                        fruit_counts[fr] += 1
+                if isinstance(fruits, list):
+                    total_fruits += len(fruits)
+                    for fr in fruits:
+                        if fr in fruit_counts:
+                            fruit_counts[fr] += 1
 
                 all_accounts.append({
                     "username": user,
-                    "fruits": fruits,
+                    "fruits": fruits if isinstance(fruits, list) else [],
                     "last_seen": last_seen,
                     "is_online": is_online
                 })
@@ -487,7 +480,10 @@ class DashboardServer(BaseHTTPRequestHandler):
                 fruits = data.get("fruits", [])
                 if user:
                     with db_lock:
-                        ACCOUNTS[user] = {"fruits": fruits, "last_seen": time.time()}
+                        ACCOUNTS[user] = {
+                            "fruits": fruits if isinstance(fruits, list) else [],
+                            "last_seen": time.time()
+                        }
                     save_db()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
