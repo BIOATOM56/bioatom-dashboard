@@ -8,7 +8,7 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 PORT = int(os.environ.get("PORT", 5000))
 DB_FILE = "accounts_db.json"
 DB_BAK_FILE = "accounts_db.json.bak"
-ONLINE_THRESHOLD = 25  # หากส่งข้อมูลภายใน 25 วินาที ถือว่าออนไลน์
+ONLINE_THRESHOLD = 25  # ส่งข้อมูลภายใน 25 วินาที ถือว่าออนไลน์
 
 db_lock = threading.Lock()
 ACCOUNTS = {}
@@ -23,10 +23,10 @@ def load_db():
                         data = json.load(f)
                         if isinstance(data, dict):
                             ACCOUNTS = data
-                            print(f"[DB] โหลดข้อมูลสำเร็จจาก {file_path} ({len(ACCOUNTS)} ไอดี)")
+                            print(f"📦 [DB] โหลดข้อมูลสำเร็จจาก {file_path} ({len(ACCOUNTS)} ไอดี)")
                             return
                 except Exception as e:
-                    print(f"[DB Warning] อ่าน {file_path} ล้มเหลว: {e}")
+                    print(f"⚠️ [DB Warning] อ่าน {file_path} ไม่สำเร็จ: {e}")
         ACCOUNTS = {}
 
 load_db()
@@ -40,7 +40,7 @@ def save_db():
             os.replace(temp_file, DB_FILE)
             shutil.copy(DB_FILE, DB_BAK_FILE)
         except Exception as e:
-            print(f"[DB Error] บันทึกไฟล์ล้มเหลว: {e}")
+            print(f"❌ [DB Error] บันทึกไฟล์ล้มเหลว: {e}")
 
 GITHUB_RAW = "https://raw.githubusercontent.com/BIOATOM56/bioatom-dashboard/main/"
 FRUITS_CONFIG = [
@@ -202,10 +202,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
     <div class="section-title">📦 Total Inventory Catalog</div>
     <div class="grid-container" id="fruit-grid">
-        <!-- Render Static Cards ทันที ไม่ปล่อยให้หน้าจอโล่ง -->
         """ + "".join([f"""
         <div class="fruit-card" id="card-{f['name']}">
-            <img class="fruit-icon" src="{f['icon']}" onerror="this.style.opacity=0.3;">
+            <img class="fruit-icon" src="{f['icon']}" onerror="this.onerror=null; this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'42\\' height=\\'42\\' viewBox=\\'0 0 24 24\\' fill=\\'none\\' stroke=\\'%23525f73\\' stroke-width=\\'2\\'><circle cx=\\'12\\' cy=\\'12\\' r=\\'9\\'/><path d=\\'M12 3v5\\'/></svg>';">
             <div class="fruit-info">
                 <span class="fruit-name">{f['name']}</span>
                 <span class="fruit-count" id="count-{f['name']}">0</span>
@@ -336,7 +335,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             if (searchQuery) {
                 accountsList = accountsList.filter(acc => 
                     acc.username.toLowerCase().includes(searchQuery) ||
-                    acc.fruits.some(f => f.toLowerCase().includes(searchQuery))
+                    (acc.fruits && acc.fruits.some(f => f.toLowerCase().includes(searchQuery)))
                 );
             }
 
@@ -349,7 +348,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 accountsList.sort((a, b) => a.username.localeCompare(b.username));
             }
 
-            const currentHash = JSON.stringify(accountsList.map(a => [a.username, a.is_online, a.fruits.length]));
+            // ตรวจสอบทั้งชื่อไอดี สถานะ และรายการผลไม้ ไม่หลุดข้อมูล
+            const currentHash = JSON.stringify(accountsList.map(a => [a.username, a.is_online, (a.fruits || []).join(',')]));
             if (currentHash === lastRenderHash) {
                 return;
             }
@@ -361,6 +361,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             } else {
                 tbody.innerHTML = accountsList.map(acc => {
                     const isChecked = selectedUsers.has(acc.username) ? 'checked' : '';
+                    const fruits = acc.fruits || [];
                     return `
                         <tr>
                             <td style="text-align: center;">
@@ -368,8 +369,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                             </td>
                             <td class="user-tag">${acc.username}</td>
                             <td>${formatTime(acc.last_seen, acc.is_online)}</td>
-                            <td><strong>${acc.fruits.length}</strong> ผล</td>
-                            <td>${acc.fruits.length ? acc.fruits.map(f => `<span class="fruit-pill">${f}</span>`).join('') : '<span style="color:var(--text-muted)">- คลังว่าง -</span>'}</td>
+                            <td><strong>${fruits.length}</strong> ผล</td>
+                            <td>${fruits.length ? fruits.map(f => `<span class="fruit-pill">${f}</span>`).join('') : '<span style="color:var(--text-muted)">- คลังว่าง -</span>'}</td>
                         </tr>
                     `;
                 }).join('');
@@ -406,7 +407,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             } catch (err) {}
         }
 
-        setInterval(fetchDashboard, 3000);
+        setInterval(fetchDashboard, 2500);
         fetchDashboard();
     </script>
 </body>
@@ -414,13 +415,22 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 """
 
 class DashboardServer(BaseHTTPRequestHandler):
+    def do_OPTIONS(self):
+        # รองรับ CORS Preflight
+        self.send_response(200)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
+
     def do_GET(self):
-        if self.path in ("/", "/index.html"):
+        clean_path = self.path.split("?")[0].rstrip("/")
+        if clean_path in ("", "/index.html"):
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.end_headers()
             self.wfile.write(HTML_TEMPLATE.encode("utf-8"))
-        elif self.path.startswith("/api/data"):
+        elif clean_path == "/api/data":
             now = time.time()
             all_accounts = []
             fruit_counts = {f["name"]: 0 for f in MONITOR_FRUITS}
@@ -471,13 +481,15 @@ class DashboardServer(BaseHTTPRequestHandler):
             self.end_headers()
 
     def do_POST(self):
-        if self.path == "/report":
+        clean_path = self.path.split("?")[0].rstrip("/")
+        if clean_path == "/report":
             content_len = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(content_len)
             try:
                 data = json.loads(body.decode("utf-8"))
                 user = data.get("username")
                 fruits = data.get("fruits", [])
+                
                 if user:
                     with db_lock:
                         ACCOUNTS[user] = {
@@ -485,14 +497,21 @@ class DashboardServer(BaseHTTPRequestHandler):
                             "last_seen": time.time()
                         }
                     save_db()
+                    # พิมพ์ลง Log บน Render ให้เห็นชัดเจน 100%
+                    print(f"📥 [REPORT IN] บัญชี: {user} | ผลไม้ ({len(fruits)} ผล): {fruits}")
+
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
                 self.end_headers()
                 self.wfile.write(b'{"status":"ok"}')
-            except Exception:
+            except Exception as e:
+                print(f"⚠️ [REPORT ERROR] แปลงข้อมูลไม่สำเร็จ: {e}")
                 self.send_response(400)
+                self.send_header("Access-Control-Allow-Origin", "*")
                 self.end_headers()
-        elif self.path == "/api/delete":
+                self.wfile.write(b'{"status":"bad_request"}')
+        elif clean_path == "/api/delete":
             content_len = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(content_len)
             try:
@@ -508,6 +527,7 @@ class DashboardServer(BaseHTTPRequestHandler):
                         save_db()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
                 self.end_headers()
                 self.wfile.write(b'{"status":"deleted"}')
             except Exception:
@@ -517,9 +537,7 @@ class DashboardServer(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
 
-    def log_message(self, format, *args):
-        return
-
 if __name__ == "__main__":
     server = ThreadingHTTPServer(("0.0.0.0", PORT), DashboardServer)
+    print(f"🚀 [Server Started] ทำงานบนพอร์ต {PORT}")
     server.serve_forever()
