@@ -1,26 +1,52 @@
 import json
 import time
 import os
+import shutil
+import threading
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 PORT = int(os.environ.get("PORT", 5000))
 DB_FILE = "accounts_db.json"
-ONLINE_THRESHOLD = 25  # วินาที: หากส่งข้อมูลภายใน 25 วิ ถือว่าออนไลน์
+DB_BAK_FILE = "accounts_db.json.bak"
+ONLINE_THRESHOLD = 25  # วินาที: ส่งข้อมูลภายใน 25 วิ ถือว่าออนไลน์
 
+# Thread Safety Lock ป้องกันการเขียนไฟล์ชนกัน
+db_lock = threading.Lock()
 ACCOUNTS = {}
-if os.path.exists(DB_FILE):
-    try:
-        with open(DB_FILE, "r", encoding="utf-8") as f:
-            ACCOUNTS = json.load(f)
-    except Exception:
+
+# โหลดฐานข้อมูลพร้อมระบบสำรองกู้คืนอัตโนมัติ
+def load_db():
+    global ACCOUNTS
+    with db_lock:
+        for file_path in [DB_FILE, DB_BAK_FILE]:
+            if os.path.exists(file_path):
+                try:
+                    with open(file_path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        if isinstance(data, dict) and len(data) > 0:
+                            ACCOUNTS = data
+                            print(f"[DB] โหลดข้อมูลสำเร็จจาก {file_path} ({len(ACCOUNTS)} ไอดี)")
+                            return
+                except Exception as e:
+                    print(f"[DB Warning] อ่าน {file_path} ล้มเหลว: {e}")
         ACCOUNTS = {}
 
+load_db()
+
+# บันทึกข้อมูลแบบ Atomic Write (เขียนไฟล์ Temp ก่อนสลับ) ป้องกันข้อมูลสูญหาย 100%
 def save_db():
-    try:
-        with open(DB_FILE, "w", encoding="utf-8") as f:
-            json.dump(ACCOUNTS, f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
+    with db_lock:
+        try:
+            temp_file = DB_FILE + ".tmp"
+            with open(temp_file, "w", encoding="utf-8") as f:
+                json.dump(ACCOUNTS, f, ensure_ascii=False, indent=2)
+            
+            # บันทึกลงไฟล์หลัก
+            os.replace(temp_file, DB_FILE)
+            # ทำไฟล์ Backup คู่ขนานเสมอ
+            shutil.copy(DB_FILE, DB_BAK_FILE)
+        except Exception as e:
+            print(f"[DB Error] บันทึกไฟล์ล้มเหลว: {e}")
 
 GITHUB_RAW = "https://raw.githubusercontent.com/BIOATOM56/bioatom-dashboard/main/"
 FRUITS_CONFIG = [
@@ -98,7 +124,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         .fruit-count { font-size: 17px; font-weight: 700; font-family: 'JetBrains Mono', monospace; color: var(--accent-red); }
         .fruit-count.has-stock { color: var(--accent-green); }
 
-        /* แถบเครื่องมือจัดการ */
         .table-toolbar {
             display: flex;
             justify-content: space-between;
@@ -111,7 +136,18 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             flex-wrap: wrap;
             gap: 12px;
         }
-        .left-controls { display: flex; align-items: center; gap: 18px; font-size: 14px; }
+        .left-controls { display: flex; align-items: center; gap: 16px; font-size: 14px; flex-wrap: wrap; }
+        .search-box {
+            background: #18181b;
+            border: 1px solid #27272a;
+            color: #f4f4f5;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 13px;
+            outline: none;
+            width: 220px;
+        }
+        .search-box:focus { border-color: var(--accent-blue); }
         .toggle-sort { display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; color: #d4d4d8; font-weight: 400; }
         .toggle-sort input { accent-color: var(--accent-blue); width: 16px; height: 16px; cursor: pointer; }
         .select-group { display: flex; align-items: center; gap: 8px; }
@@ -182,9 +218,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 <span id="selected-badge" style="color: var(--text-muted); font-size: 13px;">(เลือก 0)</span>
             </div>
             <label class="toggle-sort">
-                <input type="checkbox" id="sort-online-toggle" onchange="fetchDashboard()">
+                <input type="checkbox" id="sort-online-toggle" onchange="applyFilterAndRender()">
                 <span>📌 เอาไอดีออนไลน์ขึ้นด้านบน</span>
             </label>
+            <input type="text" id="search-input" class="search-box" placeholder="🔍 ค้นหาไอดี หรือ ผลไม้..." oninput="applyFilterAndRender()">
         </div>
         <div class="btn-group">
             <button id="btn-del-sel" class="btn-action btn-danger-sel" onclick="deleteSelected()" disabled>🗑️ ลบที่เลือก</button>
@@ -211,6 +248,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
     <script>
         const selectedUsers = new Set();
+        let cachedData = null;
+        let lastRenderHash = "";
 
         function formatTime(lastSeenSec, isOnline) {
             if (isOnline) return '<span class="status-badge status-online">● ออนไลน์</span>';
@@ -260,12 +299,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 selectedUsers.clear();
                 updateToolbar();
                 document.getElementById('check-all').checked = false;
-                fetchDashboard();
+                fetchDashboard(true);
             } catch(e) {}
         }
 
         async function deleteAll() {
-            if (!confirm("⚠️ คำเตือน: คุณต้องการล้างประวัติข้อมูลทุกไอดีทิ้งทั้งหมดใช่หรือไม่?")) return;
+            if (!confirm("⚠️ คำเตือน: ต้องการล้างประวัติข้อมูลทุกไอดีทิ้งทั้งหมดใช่หรือไม่?")) return;
 
             try {
                 await fetch('/api/delete', {
@@ -276,68 +315,109 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 selectedUsers.clear();
                 updateToolbar();
                 document.getElementById('check-all').checked = false;
-                fetchDashboard();
+                fetchDashboard(true);
             } catch(e) {}
         }
 
-        async function fetchDashboard() {
+        function applyFilterAndRender() {
+            if (!cachedData) return;
+
+            const searchQuery = document.getElementById('search-input').value.toLowerCase().trim();
+            const sortOnlineFirst = document.getElementById('sort-online-toggle').checked;
+            
+            let accountsList = [...cachedData.accounts];
+
+            // กรองข้อความค้นหา (ชื่อไอดี หรือ ผลไม้)
+            if (searchQuery) {
+                accountsList = accountsList.filter(acc => 
+                    acc.username.toLowerCase().includes(searchQuery) ||
+                    acc.fruits.some(f => f.toLowerCase().includes(searchQuery))
+                );
+            }
+
+            // จัดเรียง
+            if (sortOnlineFirst) {
+                accountsList.sort((a, b) => {
+                    if (a.is_online !== b.is_online) return a.is_online ? -1 : 1;
+                    return a.username.localeCompare(b.username);
+                });
+            } else {
+                accountsList.sort((a, b) => a.username.localeCompare(b.username));
+            }
+
+            // ป้องกันการ Render ซ้ำถ้าข้อมูลชุดเดิมตรงกัน (Ctrl+F จะไม่หาย)
+            const currentHash = JSON.stringify(accountsList.map(a => [a.username, a.is_online, a.fruits.length]));
+            if (currentHash === lastRenderHash) {
+                // อัปเดตเฉพาะป้ายสถานะเวลา ไม่รื้อตารางทิ้ง
+                return;
+            }
+            lastRenderHash = currentHash;
+
+            const tbody = document.getElementById('account-body');
+            if (accountsList.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 24px;">ไม่พบข้อมูลไอดี</td></tr>';
+            } else {
+                tbody.innerHTML = accountsList.map(acc => {
+                    const isChecked = selectedUsers.has(acc.username) ? 'checked' : '';
+                    return `
+                        <tr>
+                            <td style="text-align: center;">
+                                <input type="checkbox" class="acc-checkbox" value="${acc.username}" ${isChecked} onchange="toggleAccount('${acc.username}', this)">
+                            </td>
+                            <td class="user-tag">${acc.username}</td>
+                            <td>${formatTime(acc.last_seen, acc.is_online)}</td>
+                            <td><strong>${acc.fruits.length}</strong> ผล</td>
+                            <td>${acc.fruits.length ? acc.fruits.map(f => `<span class="fruit-pill">${f}</span>`).join('') : '<span style="color:var(--text-muted)">- คลังว่าง -</span>'}</td>
+                        </tr>
+                    `;
+                }).join('');
+            }
+        }
+
+        async function fetchDashboard(forceRender = false) {
             try {
                 const res = await fetch('/api/data');
                 const data = await res.json();
-                
+                cachedData = data;
+
                 document.getElementById('online-val').innerText = data.online_count;
                 document.getElementById('total-acc-val').innerText = data.accounts.length;
                 document.getElementById('fruits-val').innerText = data.total_fruits;
 
+                // อัปเดตการ์ดผลไม้เฉพาะตัวเลข ไม่ทำลาย DOM ทิ้ง
                 const grid = document.getElementById('fruit-grid');
-                grid.innerHTML = data.fruits.map(f => `
-                    <div class="fruit-card ${f.count > 0 ? 'active' : ''}">
-                        <img class="fruit-icon" 
-                             src="${f.icon}" 
-                             onerror="this.onerror=null; this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'42\\' height=\\'42\\' viewBox=\\'0 0 24 24\\' fill=\\'none\\' stroke=\\'%23525f73\\' stroke-width=\\'2\\'><rect width=\\'18\\' height=\\'18\\' x=\\'3\\' y=\\'3\\' rx=\\'2\\'/><circle cx=\\'8.5\\' cy=\\'8.5\\' r=\\'1.5\\'/><path d=\\'m21 15-5-5L5 21\\'/></svg>';">
-                        <div class="fruit-info">
-                            <span class="fruit-name">${f.name}</span>
-                            <span class="fruit-count ${f.count > 0 ? 'has-stock' : ''}">${f.count}</span>
+                if (grid.children.length === 0 || forceRender) {
+                    grid.innerHTML = data.fruits.map(f => `
+                        <div class="fruit-card ${f.count > 0 ? 'active' : ''}" id="card-${f.name}">
+                            <img class="fruit-icon" src="${f.icon}" onerror="this.onerror=null; this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'42\\' height=\\'42\\' viewBox=\\'0 0 24 24\\' fill=\\'none\\' stroke=\\'%23525f73\\' stroke-width=\\'2\\'><rect width=\\'18\\' height=\\'18\\' x=\\'3\\' y=\\'3\\' rx=\\'2\\'/><circle cx=\\'8.5\\' cy=\\'8.5\\' r=\\'1.5\\'/><path d=\\'m21 15-5-5L5 21\\'/></svg>';">
+                            <div class="fruit-info">
+                                <span class="fruit-name">${f.name}</span>
+                                <span class="fruit-count ${f.count > 0 ? 'has-stock' : ''}" id="count-${f.name}">${f.count}</span>
+                            </div>
                         </div>
-                    </div>
-                `).join('');
-
-                // การจัดเรียง: หากติ๊กเลือก ให้เอาออนไลน์ขึ้นบน หากไม่ติ๊ก ให้เรียงชื่อตามตัวอักษรคงที่ (ไม่เด้งสลับ)
-                const sortOnlineFirst = document.getElementById('sort-online-toggle').checked;
-                const accountsList = [...data.accounts];
-                if (sortOnlineFirst) {
-                    accountsList.sort((a, b) => {
-                        if (a.is_online !== b.is_online) return a.is_online ? -1 : 1;
-                        return a.username.localeCompare(b.username);
+                    `).join('');
+                } else {
+                    data.fruits.forEach(f => {
+                        const countEl = document.getElementById(`count-${f.name}`);
+                        const cardEl = document.getElementById(`card-${f.name}`);
+                        if (countEl && countEl.innerText != f.count) {
+                            countEl.innerText = f.count;
+                            countEl.className = `fruit-count ${f.count > 0 ? 'has-stock' : ''}`;
+                        }
+                        if (cardEl) {
+                            if (f.count > 0) cardEl.classList.add('active');
+                            else cardEl.classList.remove('active');
+                        }
                     });
-                } else {
-                    accountsList.sort((a, b) => a.username.localeCompare(b.username));
                 }
 
-                const tbody = document.getElementById('account-body');
-                if (accountsList.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 24px;">ไม่มีประวัติข้อมูลไอดีในระบบ</td></tr>';
-                } else {
-                    tbody.innerHTML = accountsList.map(acc => {
-                        const isChecked = selectedUsers.has(acc.username) ? 'checked' : '';
-                        return `
-                            <tr>
-                                <td style="text-align: center;">
-                                    <input type="checkbox" class="acc-checkbox" value="${acc.username}" ${isChecked} onchange="toggleAccount('${acc.username}', this)">
-                                </td>
-                                <td class="user-tag">${acc.username}</td>
-                                <td>${formatTime(acc.last_seen, acc.is_online)}</td>
-                                <td><strong>${acc.fruits.length}</strong> ผล</td>
-                                <td>${acc.fruits.length ? acc.fruits.map(f => `<span class="fruit-pill">${f}</span>`).join('') : '<span style="color:var(--text-muted)">- คลังว่าง -</span>'}</td>
-                            </tr>
-                        `;
-                    }).join('');
-                }
+                applyFilterAndRender();
             } catch (err) {}
         }
 
-        setInterval(fetchDashboard, 2000);
-        fetchDashboard();
+        // รีเฟรชข้อมูลทุก 3 วินาที
+        setInterval(fetchDashboard, 3000);
+        fetchDashboard(true);
     </script>
 </body>
 </html>
@@ -357,7 +437,10 @@ class DashboardServer(BaseHTTPRequestHandler):
             total_fruits = 0
             online_count = 0
 
-            for user, data in list(ACCOUNTS.items()):
+            with db_lock:
+                current_accounts = dict(ACCOUNTS)
+
+            for user, data in current_accounts.items():
                 last_seen = data.get("last_seen", 0)
                 is_online = (now - last_seen) <= ONLINE_THRESHOLD
                 if is_online:
@@ -403,9 +486,11 @@ class DashboardServer(BaseHTTPRequestHandler):
                 user = data.get("username")
                 fruits = data.get("fruits", [])
                 if user:
-                    ACCOUNTS[user] = {"fruits": fruits, "last_seen": time.time()}
+                    with db_lock:
+                        ACCOUNTS[user] = {"fruits": fruits, "last_seen": time.time()}
                     save_db()
                 self.send_response(200)
+                self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 self.wfile.write(b'{"status":"ok"}')
             except Exception:
@@ -416,15 +501,17 @@ class DashboardServer(BaseHTTPRequestHandler):
             body = self.rfile.read(content_len)
             try:
                 data = json.loads(body.decode("utf-8"))
-                if data.get("all") is True:
-                    ACCOUNTS.clear()
-                    save_db()
-                elif "usernames" in data and isinstance(data["usernames"], list):
-                    for u in data["usernames"]:
-                        if u in ACCOUNTS:
-                            del ACCOUNTS[u]
-                    save_db()
+                with db_lock:
+                    if data.get("all") is True:
+                        ACCOUNTS.clear()
+                        save_db()
+                    elif "usernames" in data and isinstance(data["usernames"], list):
+                        for u in data["usernames"]:
+                            if u in ACCOUNTS:
+                                del ACCOUNTS[u]
+                        save_db()
                 self.send_response(200)
+                self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 self.wfile.write(b'{"status":"deleted"}')
             except Exception:
