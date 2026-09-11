@@ -10,7 +10,6 @@ DB_FILE = "accounts_db.json"
 DB_BAK_FILE = "accounts_db.json.bak"
 ONLINE_THRESHOLD = 35
 
-# แก้ไขเป็น RLock เพื่อป้องกัน Deadlock เมื่อมีการเรียกบันทึกฐานข้อมูลซ้ำซ้อน
 db_lock = threading.RLock()
 ACCOUNTS = {}
 
@@ -132,8 +131,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             flex-wrap: wrap;
             gap: 12px;
         }
-        .left-controls { display: flex; align-items: center; gap: 16px; font-size: 14px; flex-wrap: wrap; }
-        .search-box {
+        .left-controls { display: flex; align-items: center; gap: 14px; font-size: 14px; flex-wrap: wrap; }
+        .search-box, .select-box {
             background: #18181b;
             border: 1px solid #27272a;
             color: #f4f4f5;
@@ -141,12 +140,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             border-radius: 6px;
             font-size: 13px;
             outline: none;
-            width: 220px;
         }
-        .search-box:focus { border-color: var(--accent-blue); }
-        .toggle-sort { display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; color: #d4d4d8; font-weight: 400; }
-        .toggle-sort input { accent-color: var(--accent-blue); width: 16px; height: 16px; cursor: pointer; }
+        .search-box { width: 200px; }
+        .search-box:focus, .select-box:focus { border-color: var(--accent-blue); }
         .select-group { display: flex; align-items: center; gap: 8px; }
+        .select-label { color: #a1a1aa; font-size: 13px; }
+        
         .btn-group { display: flex; gap: 8px; }
         .btn-action {
             background: #18181b;
@@ -171,6 +170,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         .status-badge { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; padding: 3px 8px; border-radius: 6px; }
         .status-online { color: var(--accent-green); background: rgba(16, 185, 129, 0.1); }
         .status-offline { color: var(--text-muted); background: #18181b; }
+        .time-detail { font-size: 11px; color: #52525b; margin-left: 6px; font-family: 'JetBrains Mono', monospace; }
         .fruit-pill { display: inline-block; background: #121215; padding: 2px 8px; border-radius: 4px; font-size: 12px; margin: 2px; border: 1px solid #27272a; }
 
         input[type="checkbox"].acc-checkbox { width: 16px; height: 16px; accent-color: var(--accent-green); cursor: pointer; }
@@ -223,10 +223,17 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 <label for="check-all" style="cursor:pointer;">เลือกทั้งหมด</label>
                 <span id="selected-badge" style="color: var(--text-muted); font-size: 13px;">(เลือก 0)</span>
             </div>
-            <label class="toggle-sort">
-                <input type="checkbox" id="sort-online-toggle" onchange="applyFilterAndRender()">
-                <span>📌 เอาไอดีออนไลน์ขึ้นด้านบน</span>
-            </label>
+            
+            <div class="select-group">
+                <span class="select-label">เรียงลำดับ:</span>
+                <select id="sort-select" class="select-box" onchange="applyFilterAndRender()">
+                    <option value="recent">⏱️ เคลื่อนไหวล่าสุด (Active ล่าสุดขึ้นก่อน)</option>
+                    <option value="online_first">🟢 สถานะออนไลน์ขึ้นก่อน</option>
+                    <option value="fruits_desc">📦 จำนวนผลไม้ (มากไปน้อย)</option>
+                    <option value="name_asc">🔤 ชื่อไอดี (A-Z)</option>
+                </select>
+            </div>
+
             <input type="text" id="search-input" class="search-box" placeholder="🔍 ค้นหาไอดี หรือ ผลไม้..." oninput="applyFilterAndRender()">
         </div>
         <div class="btn-group">
@@ -258,12 +265,21 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         let lastRenderHash = "";
 
         function formatTime(lastSeenSec, isOnline) {
-            if (isOnline) return '<span class="status-badge status-online">● ออนไลน์</span>';
+            const timeObj = new Date(lastSeenSec * 1000);
+            const timeStr = timeObj.toLocaleTimeString('th-TH', { hour12: false });
+            
+            if (isOnline) {
+                return `<span class="status-badge status-online">● ออนไลน์</span> <span class="time-detail">(${timeStr})</span>`;
+            }
+            
             const diff = Math.floor((Date.now() / 1000) - lastSeenSec);
-            if (diff < 60) return `<span class="status-badge status-offline">${diff} วิที่แล้ว</span>`;
-            if (diff < 3600) return `<span class="status-badge status-offline">${Math.floor(diff/60)} นาทีที่แล้ว</span>`;
-            if (diff < 86400) return `<span class="status-badge status-offline">${Math.floor(diff/3600)} ชม. ที่แล้ว</span>`;
-            return `<span class="status-badge status-offline">${Math.floor(diff/86400)} วันที่แล้ว</span>`;
+            let relStr = "";
+            if (diff < 60) relStr = `${diff} วิที่แล้ว`;
+            else if (diff < 3600) relStr = `${Math.floor(diff/60)} นาทีที่แล้ว`;
+            else if (diff < 86400) relStr = `${Math.floor(diff/3600)} ชม. ที่แล้ว`;
+            else relStr = `${Math.floor(diff/86400)} วันที่แล้ว`;
+
+            return `<span class="status-badge status-offline">${relStr}</span> <span class="time-detail">(${timeStr})</span>`;
         }
 
         function toggleSelectAll(master) {
@@ -329,7 +345,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             if (!cachedData || !cachedData.accounts) return;
 
             const searchQuery = document.getElementById('search-input').value.toLowerCase().trim();
-            const sortOnlineFirst = document.getElementById('sort-online-toggle').checked;
+            const sortMode = document.getElementById('sort-select').value;
             
             let accountsList = [...cachedData.accounts];
 
@@ -340,16 +356,21 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 );
             }
 
-            if (sortOnlineFirst) {
+            // ระบบจัดเรียงตามลำดับที่เลือก
+            if (sortMode === 'recent') {
+                accountsList.sort((a, b) => (b.last_seen || 0) - (a.last_seen || 0));
+            } else if (sortMode === 'online_first') {
                 accountsList.sort((a, b) => {
                     if (a.is_online !== b.is_online) return a.is_online ? -1 : 1;
-                    return a.username.localeCompare(b.username);
+                    return (b.last_seen || 0) - (a.last_seen || 0);
                 });
-            } else {
+            } else if (sortMode === 'fruits_desc') {
+                accountsList.sort((a, b) => ((b.fruits || []).length) - ((a.fruits || []).length));
+            } else if (sortMode === 'name_asc') {
                 accountsList.sort((a, b) => a.username.localeCompare(b.username));
             }
 
-            const currentHash = JSON.stringify(accountsList.map(a => [a.username, a.is_online, (a.fruits || []).join(',')]));
+            const currentHash = JSON.stringify(accountsList.map(a => [a.username, a.is_online, a.last_seen, (a.fruits || []).join(',')]));
             if (currentHash === lastRenderHash) {
                 return;
             }
