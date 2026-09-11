@@ -8,9 +8,10 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 PORT = int(os.environ.get("PORT", 5000))
 DB_FILE = "accounts_db.json"
 DB_BAK_FILE = "accounts_db.json.bak"
-ONLINE_THRESHOLD = 35  # ขยายเป็น 35 วินาที เผื่อดีเลย์เวลาเปิดฟาร์มหลายจอ
+ONLINE_THRESHOLD = 35
 
-db_lock = threading.Lock()
+# แก้ไขเป็น RLock เพื่อป้องกัน Deadlock เมื่อมีการเรียกบันทึกฐานข้อมูลซ้ำซ้อน
+db_lock = threading.RLock()
 ACCOUNTS = {}
 
 def load_db():
@@ -427,17 +428,21 @@ class DashboardServer(BaseHTTPRequestHandler):
     def do_GET(self):
         clean_path = self.path.split("?")[0].rstrip("/")
         if clean_path in ("", "/index.html"):
+            response_bytes = HTML_TEMPLATE.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(response_bytes)))
             self._send_cors_headers()
             self.end_headers()
-            self.wfile.write(HTML_TEMPLATE.encode("utf-8"))
+            self.wfile.write(response_bytes)
         elif clean_path == "/health":
+            response_bytes = b"OK - Bioatom Dashboard Active"
             self.send_response(200)
             self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(response_bytes)))
             self._send_cors_headers()
             self.end_headers()
-            self.wfile.write(b"OK - Bioatom Dashboard Active")
+            self.wfile.write(response_bytes)
         elif clean_path == "/api/data":
             now = time.time()
             all_accounts = []
@@ -479,11 +484,13 @@ class DashboardServer(BaseHTTPRequestHandler):
                 "accounts": all_accounts
             }
 
+            response_bytes = json.dumps(response_data, ensure_ascii=False).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(response_bytes)))
             self._send_cors_headers()
             self.end_headers()
-            self.wfile.write(json.dumps(response_data, ensure_ascii=False).encode("utf-8"))
+            self.wfile.write(response_bytes)
         else:
             self.send_response(404)
             self._send_cors_headers()
@@ -504,17 +511,14 @@ class DashboardServer(BaseHTTPRequestHandler):
                         old_data = ACCOUNTS.get(user, {})
                         old_fruits = old_data.get("fruits", [])
                         
-                        # แยกประเภท: สแกนกระเป๋าจริง vs ส่งชีพจร Heartbeat
                         is_actual_scan = data.get("is_scan") is True
                         raw_fruits = data.get("fruits")
 
                         if is_actual_scan:
-                            # สแกนกระเป๋าสำเร็จ: เขียนทับด้วยข้อมูลคลังล่าสุด
                             new_fruits = raw_fruits if isinstance(raw_fruits, list) else []
                         elif isinstance(raw_fruits, list) and len(raw_fruits) > 0:
                             new_fruits = raw_fruits
                         else:
-                            # กระเป๋าปิด/Heartbeat: จำผลไม้เดิมไว้ 100%
                             new_fruits = old_fruits
                         
                         ACCOUNTS[user] = {
@@ -525,18 +529,22 @@ class DashboardServer(BaseHTTPRequestHandler):
                     scan_tag = "📦 SCAN" if is_actual_scan else "💓 HEARTBEAT"
                     print(f"📥 [{scan_tag}] {user} | ผลไม้: {len(new_fruits)} ผล | เวลา: {time.strftime('%H:%M:%S')}")
 
+                response_bytes = b'{"status":"ok"}'
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(response_bytes)))
                 self._send_cors_headers()
                 self.end_headers()
-                self.wfile.write(b'{"status":"ok"}')
+                self.wfile.write(response_bytes)
             except Exception as e:
                 print(f"❌ [POST /report Error] {e} | Body: {body}")
+                response_bytes = b'{"status":"bad_request"}'
                 self.send_response(400)
                 self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(response_bytes)))
                 self._send_cors_headers()
                 self.end_headers()
-                self.wfile.write(b'{"status":"bad_request"}')
+                self.wfile.write(response_bytes)
         elif clean_path == "/api/delete":
             content_len = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(content_len)
@@ -546,26 +554,30 @@ class DashboardServer(BaseHTTPRequestHandler):
                 with db_lock:
                     if data.get("all") is True:
                         ACCOUNTS.clear()
-                        save_db()
                         print("🗑️ [DB] ล้างข้อมูลทุกไอดีเรียบร้อย")
                     elif "usernames" in data and isinstance(data["usernames"], list):
                         for u in data["usernames"]:
                             if u in ACCOUNTS:
                                 del ACCOUNTS[u]
-                        save_db()
                         print(f"🗑️ [DB] ลบ {len(data['usernames'])} ไอดีที่เลือก")
+                save_db()
+
+                response_bytes = b'{"status":"deleted"}'
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(response_bytes)))
                 self._send_cors_headers()
                 self.end_headers()
-                self.wfile.write(b'{"status":"deleted"}')
+                self.wfile.write(response_bytes)
             except Exception as e:
                 print(f"❌ [POST /api/delete Error] {e}")
+                response_bytes = b'{"status":"bad_request"}'
                 self.send_response(400)
                 self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(response_bytes)))
                 self._send_cors_headers()
                 self.end_headers()
-                self.wfile.write(b'{"status":"bad_request"}')
+                self.wfile.write(response_bytes)
         else:
             self.send_response(404)
             self._send_cors_headers()
